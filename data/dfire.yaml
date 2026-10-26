@@ -1,0 +1,11 @@
+# D-Fire dataset config for Ultralytics.
+# Download from https://github.com/wizbeans/FireDataset (D-Fire) and unpack to the path below.
+# Expected layout: <path>/train/images, train/labels, test/images, test/labels
+# IMPORTANT: open one label file and an image to confirm the class order
+# (0 = smoke, 1 = fire is expected). Swap the names below if it is the other way round.
+path: /home/jetson_labs/datasets/dfire
+train: train/images
+val: test/images
+names:
+  0: smoke
+  1: fire

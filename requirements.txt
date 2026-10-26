@@ -1,0 +1,11 @@
+# Tested inside the course container on the Jetson (see README for the image name).
+# torch 2.1.0 and torchvision come from the container image, so they are not listed here.
+ultralytics==8.4.166
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+streamlit==1.65.0
+filelock>=3.16.1
+cloudpickle
+polars
+nvidia-ml-py
+pytest
