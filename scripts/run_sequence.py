@@ -5,6 +5,7 @@ Example:
     python scripts/run_sequence.py data/figlib/sequence1 --weights weights/best.pt
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -56,3 +57,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # On the Jetson, some library combinations crash while Python shuts down,
+    # after all the work is done. Exit right away so that cannot hide the results.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

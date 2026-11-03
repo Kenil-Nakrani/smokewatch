@@ -109,3 +109,28 @@ def test_escalation_fires_once_per_level():
     e = AlertEngine()
     flags = [e.update([smoke()]).escalated for _ in range(6)]
     assert flags.count(True) == 1
+
+
+def test_confirmed_stays_confirmed_while_smoke_visible():
+    e = AlertEngine()
+    for i in range(5):
+        e.update([smoke(grow(i))])
+    for _ in range(5):  # smoke stops growing but is still there
+        s = e.update([smoke(grow(4))])
+    assert s.level == Level.CONFIRMED_FIRE
+
+
+def test_confirmed_resets_when_smoke_gone():
+    e = AlertEngine()
+    for i in range(5):
+        e.update([smoke(grow(i))])
+    for _ in range(3):
+        e.update([])
+    assert e.update([]).level == Level.CLEAR
+
+
+def test_growth_reason_says_20_percent():
+    e = AlertEngine()
+    for i in range(5):
+        s = e.update([smoke(grow(i))])
+    assert s.reason == "Smoke grew 20%+"

@@ -52,6 +52,7 @@ class Track:
     box: Box
     hits: int = 1
     missed: int = 0
+    confirmed: bool = False  # once confirmed, stays confirmed while the track lives
     areas: deque = field(default_factory=lambda: deque(maxlen=5))
 
 
@@ -178,10 +179,15 @@ class AlertEngine:
                      and t.areas[0] > 0
                      and t.areas[-1] / t.areas[0] >= c.growth_ratio)
             fire_inside = any(inter(t.box, f.box) > 0 for f in fire)
-            if grown or fire_inside:
+            if grown or fire_inside or t.confirmed:
+                if fire_inside:
+                    reason = "Fire inside smoke"
+                elif grown:
+                    reason = f"Smoke grew {round((c.growth_ratio - 1) * 100)}%+"
+                else:
+                    reason = "Confirmed smoke still visible"
+                t.confirmed = True
                 level = Level.CONFIRMED_FIRE
-                reason = ("Fire inside smoke" if fire_inside
-                          else f"Smoke grew {int((c.growth_ratio - 1) * 100)}%+")
                 break
 
         escalated = (level in (Level.POSSIBLE_FIRE, Level.CONFIRMED_FIRE)

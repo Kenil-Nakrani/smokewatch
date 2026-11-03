@@ -7,5 +7,4 @@ streamlit==1.65.0
 filelock>=3.16.1
 cloudpickle
 polars
-nvidia-ml-py
 pytest
