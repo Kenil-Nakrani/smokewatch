@@ -3,20 +3,27 @@
 Run:  streamlit run frontend/app.py --server.address 0.0.0.0 --server.port 8501
 Then open http://<jetson-ip>:8501 in a browser on your laptop.
 """
+import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import cv2
+import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from backend import store  # noqa: E402
 from backend.detector import YoloDetector  # noqa: E402
-from backend.pipeline import SmokeWatch, iter_frames  # noqa: E402
+from backend.pipeline import IMG_EXT, SmokeWatch  # noqa: E402
 from backend.rules import Config, Level  # noqa: E402
 
+WEIGHTS = ROOT / "weights" / "best.pt"
+FIGLIB = ROOT / "data" / "figlib"
+ALERT_LEVELS = (Level.POSSIBLE_FIRE, Level.CONFIRMED_FIRE)
 BADGE = {
     Level.CLEAR: "#2e9e4f",
     Level.WATCH: "#d4a600",
@@ -25,119 +32,174 @@ BADGE = {
     Level.FEED_ISSUE: "#757575",
 }
 
-st.set_page_config(page_title="SmokeWatch", layout="wide")
-st.title("SmokeWatch")
-st.caption("Edge AI wildfire smoke early warning")
 
-
+# ---------------- helpers ----------------
 @st.cache_resource
-def load_detector(weights: str, conf: float):
-    return YoloDetector(weights, conf=conf)
+def load_detector(weights: str):
+    return YoloDetector(weights, conf=Config().conf_watch)
+
+
+def offset_seconds(name: str):
+    """FIgLib file names end in seconds from ignition, e.g. 1465063268_-02400.jpg."""
+    m = re.search(r"_([+-]?\d+)\.\w+$", name)
+    return int(m.group(1)) if m else None
+
+
+def list_sequences() -> list[str]:
+    if not FIGLIB.exists():
+        return []
+    return sorted(d.name for d in FIGLIB.iterdir()
+                  if d.is_dir() and any(f.suffix.lower() in IMG_EXT for f in d.iterdir()))
+
+
+def sequence_frames(folder: Path):
+    """Yield (frame, seconds from ignition) for every image in a FIgLib folder."""
+    files = sorted(f for f in folder.iterdir() if f.suffix.lower() in IMG_EXT)
+    for i, f in enumerate(files):
+        img = cv2.imread(str(f))
+        if img is not None:
+            off = offset_seconds(f.name)
+            yield img, float(off if off is not None else i * 60)
+
+
+def video_frames(path: str, per_second: int = 2):
+    """Yield (frame, seconds into the video), about 2 frames per second of video."""
+    cap = cv2.VideoCapture(path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    step = max(1, round(fps / per_second))
+    i = 0
+    try:
+        while True:
+            ok, img = cap.read()
+            if not ok:
+                break
+            if i % step == 0:
+                yield img, i / fps
+            i += 1
+    finally:
+        cap.release()
+
+
+def shrink(img, width: int = 1280):
+    h, w = img.shape[:2]
+    return img if w <= width else cv2.resize(img, (width, int(h * width / w)))
 
 
 def badge(level: Level, reason: str) -> str:
     return (f"<div style='background:{BADGE[level]};color:white;padding:14px 18px;"
-            f"border-radius:8px;font-size:22px;font-weight:700'>{level.label.upper()}"
-            f"<span style='font-size:14px;font-weight:400;margin-left:12px'>{reason}</span></div>")
+            f"border-radius:8px;font-size:24px;font-weight:700'>{level.label.upper()}"
+            f"<span style='font-size:15px;font-weight:400;margin-left:14px'>{reason}</span></div>")
 
 
-def parse_zones(text: str):
-    zones = []
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            x1, y1, x2, y2 = (float(v) for v in line.split(","))
-            zones.append((x1, y1, x2, y2))
-    return zones
+def fmt_time(t, is_sequence: bool) -> str:
+    if t is None:
+        return "none yet"
+    return f"{t / 60:+.0f} min" if is_sequence else f"{t:.0f} s"
 
 
-# ---------------- sidebar controls ----------------
+# ---------------- page ----------------
+st.set_page_config(page_title="SmokeWatch", layout="wide")
+st.title("SmokeWatch")
+st.caption("Wildfire smoke early warning, running on an NVIDIA Jetson")
+
 with st.sidebar:
-    st.header("Input")
-    mode = st.radio("Source", ["Image folder (e.g. FIgLib)", "Upload video", "Live camera"])
-    weights = st.text_input("Model weights", "weights/best.pt")
-    folder = upload = None
-    if mode.startswith("Image"):
-        folder = st.text_input("Folder path", "data/figlib/sequence1")
-    elif mode == "Upload video":
-        upload = st.file_uploader("Video file", type=["mp4", "avi", "mov", "mkv"])
+    st.header("1. Choose input")
+    source = st.radio("Source", ["Real fire sequence", "Upload video"])
+    choice = upload = None
+    if source == "Real fire sequence":
+        seqs = list_sequences()
+        if seqs:
+            choice = st.selectbox("Sequence", seqs)
+        else:
+            st.warning("No sequences found in data/figlib.")
     else:
-        cam = st.number_input("Camera index", 0, 10, 0)
-        max_frames = st.number_input("Frames to process", 10, 5000, 300)
+        upload = st.file_uploader("Video file", type=["mp4", "avi", "mov", "mkv"])
 
-    st.header("Alert settings")
-    conf = st.slider("Alert confidence", 0.3, 0.9, 0.5, 0.05)
-    persistence = st.slider("Persistence (frames)", 2, 10, 3)
-    step = st.number_input("Process every Nth frame", 1, 100, 1)
-    sec_per_frame = st.number_input("Seconds between processed frames", 0.01, 600.0,
-                                    60.0 if mode.startswith("Image") else 1.0)
-    zones_text = st.text_area("Exclusion zones (x1,y1,x2,y2 per line)", "")
-    start = st.button("Start", type="primary")
+    st.header("2. Sensitivity")
+    conf = st.slider("Alert confidence", 0.3, 0.9, 0.5, 0.05,
+                     help="Lower = alerts sooner, but more false alarms.")
 
-# ---------------- run ----------------
+    start = st.button("Start", type="primary", width="stretch")
+
 status_box = st.empty()
+m1, m2, m3 = st.columns(3)
+time_box, first_box, speed_box = m1.empty(), m2.empty(), m3.empty()
 image_box = st.empty()
-col1, col2 = st.columns(2)
-timer_box = col1.empty()
-chart_box = col2.empty()
+chart_title = st.empty()
+chart_box = st.empty()
+chart_note = st.empty()
 
 if start:
-    if not Path(weights).exists():
-        st.error(f"Weights not found: {weights}")
-        st.stop()
-    try:
-        zones = parse_zones(zones_text)
-    except ValueError:
-        st.error("Exclusion zones must look like: 100,50,300,200")
+    if not WEIGHTS.exists():
+        st.error(f"Model not found: {WEIGHTS.relative_to(ROOT)}")
         st.stop()
 
-    if mode.startswith("Image"):
-        source = folder
-    elif mode == "Upload video":
+    is_sequence = source == "Real fire sequence"
+    if is_sequence:
+        if not choice:
+            st.error("Pick a sequence first.")
+            st.stop()
+        frames, name = sequence_frames(FIGLIB / choice), choice
+        time_label, axis = "Minutes since fire started", "Minutes since fire started"
+    else:
         if upload is None:
             st.error("Upload a video first.")
             st.stop()
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=Path(upload.name).suffix)
         tmp.write(upload.read())
         tmp.close()
-        source = tmp.name
-    else:
-        source = str(int(cam))
+        frames, name = video_frames(tmp.name), Path(upload.name).stem
+        time_label, axis = "Video time", "Seconds into video"
 
-    cfg = Config(conf_alert=conf, persistence_frames=persistence, exclusion_zones=zones)
-    sw = SmokeWatch(load_detector(weights, cfg.conf_watch), cfg,
-                    source_name=Path(source).name or source)
-    areas = []
-    for n, (idx, frame) in enumerate(iter_frames(source, int(step))):
-        if mode == "Live camera" and n >= max_frames:
-            break
-        ts = n * sec_per_frame
-        status, dets, annotated = sw.process(frame, idx, timestamp=ts)
+    sw = SmokeWatch(load_detector(str(WEIGHTS)), Config(conf_alert=conf), source_name=name)
+    rows, first_alert, speeds = [], None, []
+    chart_title.markdown("**Smoke confidence over time**")
+
+    for n, (frame, t) in enumerate(frames):
+        t0 = time.perf_counter()
+        status, dets, annotated = sw.process(frame, n, timestamp=t)
+        speeds.append(time.perf_counter() - t0)
+
+        if status.level in ALERT_LEVELS and first_alert is None:
+            first_alert = t
+        smoke = max((d.conf for d in dets if d.cls == "smoke"), default=0.0)
+        rows.append({axis: t / 60 if is_sequence else t,
+                     "Smoke confidence": smoke, "Alert threshold": conf})
+
         status_box.markdown(badge(status.level, status.reason), unsafe_allow_html=True)
-        image_box.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
-        smoke_area = max([(d.box[2] - d.box[0]) * (d.box[3] - d.box[1])
-                          for d in dets if d.cls == "smoke"], default=0)
-        areas.append(smoke_area)
-        if status.first_detection_ts is not None:
-            mins = (ts - status.first_detection_ts) / 60
-            timer_box.metric("Minutes since first detection", f"{mins:.1f}")
-        else:
-            timer_box.metric("Minutes since first detection", "none yet")
-        if n % 5 == 0:
-            chart_box.line_chart({"Smoke area (px)": areas})
-    chart_box.line_chart({"Smoke area (px)": areas})
-    st.success(f"Done. Processed {len(areas)} frames.")
+        time_box.metric(time_label, fmt_time(t, is_sequence))
+        first_box.metric("First alert", fmt_time(first_alert, is_sequence))
+        recent = speeds[-10:]
+        speed_box.metric("Speed", f"{len(recent) / sum(recent):.1f} frames/sec")
+        image_box.image(cv2.cvtColor(shrink(annotated), cv2.COLOR_BGR2RGB),
+                        width="stretch")
+        if n % 3 == 0:
+            chart_box.line_chart(pd.DataFrame(rows).set_index(axis))
 
-# ---------------- alert log with feedback ----------------
-st.subheader("Alert log")
-alerts = store.list_alerts()
+    if rows:
+        chart_box.line_chart(pd.DataFrame(rows).set_index(axis))
+        if is_sequence:
+            chart_note.caption("0 on the time axis is the moment the fire started.")
+        st.success(f"Done. Processed {len(rows)} frames.")
+    else:
+        st.warning("No frames found in this input.")
+
+# ---------------- alert log ----------------
+st.divider()
+head, clear = st.columns([5, 1])
+head.subheader("Alert log")
+if clear.button("Clear log"):
+    store.clear_alerts()
+    st.rerun()
+
+alerts = store.list_alerts()[:10]
 if not alerts:
     st.info("No alerts yet.")
-for a in alerts[:20]:
-    c1, c2, c3 = st.columns([1, 3, 2])
+for a in alerts:
+    c1, c2, c3 = st.columns([2, 4, 2])
     if a["snapshot"] and Path(a["snapshot"]).exists():
-        c1.image(a["snapshot"], use_container_width=True)
-    c2.markdown(f"**{a['level']}** at frame {a['frame_index']} ({a['source']})  \n{a['reason']}")
+        c1.image(a["snapshot"], width="stretch")
+    c2.markdown(f"**{a['level']}**  \n{a['reason']}  \nFrame {a['frame_index']} of {a['source']}")
     c3.write(f"Feedback: {a['feedback'] or 'none'}")
     if c3.button("Confirm", key=f"c{a['id']}"):
         store.set_feedback(a["id"], "confirmed")

@@ -51,3 +51,18 @@ def test_iter_frames_reads_image_folder(tmp_path):
         cv2.imwrite(str(tmp_path / f"{i:03d}.jpg"), frame(i * 10))
     assert [i for i, _ in iter_frames(str(tmp_path))] == [0, 1, 2, 3]
     assert [i for i, _ in iter_frames(str(tmp_path), step=2)] == [0, 2]
+
+
+def test_store_clear(tmp_path):
+    db = tmp_path / "a.db"
+    store.add_alert("cam1", 1, "Possible Fire", "test", "x.jpg", db=db)
+    store.clear_alerts(db=db)
+    assert store.list_alerts(db=db) == []
+
+
+def test_draw_keeps_size_and_marks_box():
+    from backend.detector import draw
+    from backend.rules import Status
+    img = frame(0)
+    out = draw(img, [Detection("smoke", 0.9, (10, 30, 60, 80))], Status(Level.CONFIRMED_FIRE, "x"))
+    assert out.shape == img.shape and not np.array_equal(out, img)

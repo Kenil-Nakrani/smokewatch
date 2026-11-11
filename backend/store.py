@@ -41,3 +41,9 @@ def set_feedback(alert_id: int, feedback: str, db: Path = DB_PATH) -> None:
     """feedback is 'confirmed' or 'false_alarm'."""
     with _conn(db) as con:
         con.execute("UPDATE alerts SET feedback=? WHERE id=?", (feedback, alert_id))
+
+
+def clear_alerts(db: Path = DB_PATH) -> None:
+    """Delete every alert (snapshot images on disk are left alone)."""
+    with _conn(db) as con:
+        con.execute("DELETE FROM alerts")

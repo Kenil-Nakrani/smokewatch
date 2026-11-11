@@ -6,14 +6,15 @@ import numpy as np
 
 from .rules import Detection, Level, Status
 
-COLORS = {"smoke": (200, 200, 200), "fire": (0, 80, 255)}
+# Box colors (BGR). Smoke boxes take the color of the current alert level.
 LEVEL_COLORS = {
     Level.CLEAR: (60, 160, 60),
-    Level.WATCH: (0, 200, 220),
+    Level.WATCH: (0, 200, 230),
     Level.POSSIBLE_FIRE: (0, 140, 255),
-    Level.CONFIRMED_FIRE: (0, 0, 220),
+    Level.CONFIRMED_FIRE: (40, 40, 220),
     Level.FEED_ISSUE: (150, 150, 150),
 }
+FIRE_COLOR = (0, 0, 255)
 
 
 class YoloDetector:
@@ -46,15 +47,18 @@ def frame_ok(frame: np.ndarray, prev: np.ndarray | None = None,
 
 
 def draw(frame: np.ndarray, dets: list[Detection], status: Status) -> np.ndarray:
+    """Draw thick, labelled boxes. Line width and text size scale with the image."""
     img = frame.copy()
+    scale = max(img.shape[1] / 1280, 0.5)
+    thick = max(2, int(3 * scale))
     for d in dets:
         x1, y1, x2, y2 = map(int, d.box)
-        col = COLORS.get(d.cls, (255, 255, 255))
-        cv2.rectangle(img, (x1, y1), (x2, y2), col, 2)
-        cv2.putText(img, f"{d.cls} {d.conf:.2f}", (x1, max(15, y1 - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1, cv2.LINE_AA)
-    col = LEVEL_COLORS[status.level]
-    cv2.rectangle(img, (0, 0), (img.shape[1], 32), col, -1)
-    cv2.putText(img, status.level.label.upper(), (10, 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        col = FIRE_COLOR if d.cls == "fire" else LEVEL_COLORS[status.level]
+        cv2.rectangle(img, (x1, y1), (x2, y2), col, thick)
+        label = f"{d.cls} {d.conf:.0%}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8 * scale, thick)
+        y_top = max(0, y1 - th - 2 * thick)
+        cv2.rectangle(img, (x1, y_top), (x1 + tw + 2 * thick, y_top + th + 2 * thick), col, -1)
+        cv2.putText(img, label, (x1 + thick, y_top + th + thick), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8 * scale, (255, 255, 255), thick, cv2.LINE_AA)
     return img
