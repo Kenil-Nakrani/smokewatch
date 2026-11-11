@@ -28,7 +28,9 @@ frontend/
 scripts/
   train.py            fine-tune YOLOv8n on D-Fire, export to TensorRT
   run_sequence.py     run the backend from the command line
+  make_video.py       turn an image sequence into an MP4 to test video upload
   convert_weights.py  only needed with older Ultralytics versions than the training one
+docs/images/        dashboard screenshots
 tests/              unit tests for the rules, pipeline and dashboard helpers
 data/dfire.yaml     dataset config
 requirements.txt
@@ -96,6 +98,24 @@ Open `http://<jetson-ip>:8501` in a browser on your laptop.
 - **Image:** the camera frame with smoke and fire boxes, colored by alert level.
 - **Chart:** smoke confidence over time against the alert threshold.
 - **Alert log:** snapshot of every alert with Confirm and False alarm buttons, plus Clear log.
+
+Running on a real wildfire (HPWREN FIgLib sequence `20160604_FIRE_smer-tcs3-mobo-c`):
+
+![SmokeWatch dashboard showing Confirmed Fire](docs/images/dashboard_running.png)
+
+Smoke confidence stays near 0 for the 40 minutes before ignition and crosses the alert threshold right after the fire starts (0 on the time axis):
+
+![Smoke confidence over time](docs/images/dashboard_chart.png)
+
+Alert log with snapshots and feedback buttons:
+
+![Alert log](docs/images/dashboard_alert_log.png)
+
+To test the **Upload video** option, turn a fire sequence into a video first:
+
+```bash
+$SW python3 scripts/make_video.py data/figlib/20160604_FIRE_smer-tcs3-mobo-c data/videos/fire_smer.mp4
+```
 
 ## Model
 
