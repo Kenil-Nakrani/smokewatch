@@ -7,7 +7,9 @@ those detections into an alert level, and a Streamlit dashboard shows the result
 Running on the Jetson means remote towers with weak internet do not need to
 stream video to the cloud.
 
-Course: Special Topics in Data Science (UMBC). Individual project.
+![SmokeWatch detecting a real wildfire](docs/images/detection.gif)
+
+*Real wildfire camera footage (HPWREN FIgLib). The bar shows minutes since ignition and the alert level: smoke is flagged as Possible Fire 4 minutes after ignition and Confirmed Fire at 6 minutes, with no false alarms before.*
 
 ## Docker image
 
@@ -29,8 +31,9 @@ scripts/
   train.py            fine-tune YOLOv8n on D-Fire, export to TensorRT
   run_sequence.py     run the backend from the command line
   make_video.py       turn an image sequence into an MP4 to test video upload
+  make_gif.py         make the animated detection GIF shown at the top
   convert_weights.py  only needed with older Ultralytics versions than the training one
-docs/images/        dashboard screenshots
+docs/images/        GIF, dashboard screenshots and training plots
 tests/              unit tests for the rules, pipeline and dashboard helpers
 data/dfire.yaml     dataset config
 requirements.txt
@@ -64,14 +67,13 @@ docker run -d --name smokewatch --runtime nvidia --network host --ipc=host --res
   -v /dev:/dev --device-cgroup-rule='c 81:* rmw' \
   -v /home/jetson/Desktop/jetson_labs:/home/jetson_labs -w /home/jetson_labs/smokewatch \
   ultralytics/ultralytics:latest-jetson-jetpack6 sleep infinity
-docker exec smokewatch useradd -u 1000 -m -s /bin/bash -G video jetson
 docker exec smokewatch pip install --no-cache-dir -r requirements.txt
 ```
 
 Shortcut for the commands below (run it once per terminal session):
 
 ```bash
-SW="docker exec -u jetson -e HOME=/tmp -e PYTHONUNBUFFERED=1 smokewatch"
+SW="docker exec -e HOME=/tmp -e PYTHONUNBUFFERED=1 smokewatch"
 ```
 
 Put the trained model at `weights/best.pt` (weights are not stored in git).
@@ -131,6 +133,14 @@ Validation results on the D-Fire val split (3,099 images):
 | smoke | 0.810 | 0.494 |
 | fire | 0.703 | 0.374 |
 
+Training curves (losses go down, precision, recall and mAP go up over the 32 epochs):
+
+![Training curves](docs/images/training_results.png)
+
+Confusion matrix on the validation set:
+
+![Confusion matrix](docs/images/confusion_matrix.png)
+
 ## Results on a real fire (on the Jetson)
 
 HPWREN FIgLib sequence `20160604_FIRE_smer-tcs3-mobo-c`: 81 frames, one per minute,
@@ -152,7 +162,7 @@ wget -q -r -l1 -np -nd -A jpg https://cdn.hpwren.ucsd.edu/HPWREN-FIgLib-Data/201
 
 ## Lessons learned
 
-The first version ran in the course container (`nvcr.io/nvidia/l4t-ml:r36.2.0-py3`). Its NumPy 2
+The first version ran in NVIDIA's general ML container for Jetson (`nvcr.io/nvidia/l4t-ml:r36.2.0-py3`). Its NumPy 2
 clashed with its OpenCV and PyTorch, and patching around that mixed library versions that
 corrupted memory and crashed the dashboard. Moving to the official Ultralytics Jetson image,
 where all libraries are built to match, fixed it.
