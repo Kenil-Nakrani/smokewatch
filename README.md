@@ -174,5 +174,4 @@ Datasets and model weights are not stored in git (see `.gitignore`).
 - [x] Fine-tune the model on D-Fire (Colab)
 - [x] Run the backend on a real fire sequence on the Jetson
 - [x] Simple Streamlit dashboard
-- [ ] Evaluate on more FIgLib sequences
 - [x] Live camera input
