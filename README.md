@@ -58,18 +58,20 @@ git clone https://github.com/Kenil-Nakrani/smokewatch.git
 cd smokewatch
 
 # one time: download the image and start a container named smokewatch
+# (-v /dev:/dev and the cgroup rule give camera access, and still let it start with no camera plugged in)
 docker pull ultralytics/ultralytics:latest-jetson-jetpack6
 docker run -d --name smokewatch --runtime nvidia --network host --ipc=host --restart unless-stopped \
+  -v /dev:/dev --device-cgroup-rule='c 81:* rmw' \
   -v /home/jetson/Desktop/jetson_labs:/home/jetson_labs -w /home/jetson_labs/smokewatch \
   ultralytics/ultralytics:latest-jetson-jetpack6 sleep infinity
-docker exec smokewatch useradd -u 1000 -m -s /bin/bash jetson
+docker exec smokewatch useradd -u 1000 -m -s /bin/bash -G video jetson
 docker exec smokewatch pip install --no-cache-dir -r requirements.txt
 ```
 
 Shortcut for the commands below (run it once per terminal session):
 
 ```bash
-SW="docker exec -u $(id -u):$(id -g) -e HOME=/tmp -e PYTHONUNBUFFERED=1 smokewatch"
+SW="docker exec -u jetson -e HOME=/tmp -e PYTHONUNBUFFERED=1 smokewatch"
 ```
 
 Put the trained model at `weights/best.pt` (weights are not stored in git).
@@ -91,7 +93,7 @@ Open `http://<jetson-ip>:8501` in a browser on your laptop.
 
 ## Dashboard
 
-- **Input:** pick a real fire sequence from `data/figlib/`, or upload a video.
+- **Input:** pick a real fire sequence from `data/figlib/`, upload a video, or use the live USB camera (runs for a set number of seconds).
 - **Sensitivity:** one slider for the alert confidence (lower alerts sooner, with more false alarms).
 - **Status bar:** Clear, Watch, Possible Fire, Confirmed Fire or Feed issue, with the reason.
 - **Numbers:** minutes since the fire started (from FIgLib file names), time of the first alert, and processing speed in frames per second.
@@ -173,4 +175,4 @@ Datasets and model weights are not stored in git (see `.gitignore`).
 - [x] Run the backend on a real fire sequence on the Jetson
 - [x] Simple Streamlit dashboard
 - [ ] Evaluate on more FIgLib sequences
-- [ ] Live camera input
+- [x] Live camera input

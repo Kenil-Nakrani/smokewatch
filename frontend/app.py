@@ -80,6 +80,20 @@ def video_frames(path: str, per_second: int = 2):
         cap.release()
 
 
+def camera_frames(index: int = 0, seconds: int = 60):
+    """Yield (frame, seconds since start) from a USB camera for a fixed time."""
+    cap = cv2.VideoCapture(index)
+    start = time.time()
+    try:
+        while time.time() - start < seconds:
+            ok, img = cap.read()
+            if not ok:
+                break
+            yield img, time.time() - start
+    finally:
+        cap.release()
+
+
 def shrink(img, width: int = 1280):
     h, w = img.shape[:2]
     return img if w <= width else cv2.resize(img, (width, int(h * width / w)))
@@ -104,16 +118,19 @@ st.caption("Wildfire smoke early warning, running on an NVIDIA Jetson")
 
 with st.sidebar:
     st.header("1. Choose input")
-    source = st.radio("Source", ["Real fire sequence", "Upload video"])
+    source = st.radio("Source", ["Real fire sequence", "Upload video", "Live camera"])
     choice = upload = None
+    run_seconds = 60
     if source == "Real fire sequence":
         seqs = list_sequences()
         if seqs:
             choice = st.selectbox("Sequence", seqs)
         else:
             st.warning("No sequences found in data/figlib.")
-    else:
+    elif source == "Upload video":
         upload = st.file_uploader("Video file", type=["mp4", "avi", "mov", "mkv"])
+    else:
+        run_seconds = st.slider("Run for (seconds)", 10, 300, 60, 10)
 
     st.header("2. Sensitivity")
     conf = st.slider("Alert confidence", 0.3, 0.9, 0.5, 0.05,
@@ -141,7 +158,7 @@ if start:
             st.stop()
         frames, name = sequence_frames(FIGLIB / choice), choice
         time_label, axis = "Minutes since fire started", "Minutes since fire started"
-    else:
+    elif source == "Upload video":
         if upload is None:
             st.error("Upload a video first.")
             st.stop()
@@ -150,6 +167,9 @@ if start:
         tmp.close()
         frames, name = video_frames(tmp.name), Path(upload.name).stem
         time_label, axis = "Video time", "Seconds into video"
+    else:
+        frames, name = camera_frames(0, run_seconds), "live_camera"
+        time_label, axis = "Time running", "Seconds since start"
 
     sw = SmokeWatch(load_detector(str(WEIGHTS)), Config(conf_alert=conf), source_name=name)
     rows, first_alert, speeds = [], None, []
@@ -181,6 +201,8 @@ if start:
         if is_sequence:
             chart_note.caption("0 on the time axis is the moment the fire started.")
         st.success(f"Done. Processed {len(rows)} frames.")
+    elif source == "Live camera":
+        st.error("Could not read from the camera. Check it is plugged in.")
     else:
         st.warning("No frames found in this input.")
 
